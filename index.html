@@ -15,7 +15,7 @@
   h1 { font-size:1.3rem; margin:0 0 12px }
   h2 { font-size:1.05rem; margin:0 0 8px }
   nav { display:flex; gap:8px; margin-bottom:16px }
-  nav button { flex:1 }
+  nav button { flex:1; padding:9px 4px; font-size:.85rem }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px }
   label { display:block; font-size:.85rem; color:var(--muted); margin:8px 0 2px }
   input, select, textarea { width:100%; padding:9px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit }
@@ -52,8 +52,9 @@
   <h1>🏃 Training Buddy</h1>
   <nav>
     <button data-tab="trainer">Trainer</button>
+    <button data-tab="food">Essen</button>
     <button data-tab="log">Log</button>
-    <button data-tab="week">Wochenanalyse</button>
+    <button data-tab="week">Woche</button>
     <button data-tab="profile">Ziele</button>
   </nav>
   <div id="view"></div>
@@ -67,7 +68,9 @@ const store = {
 };
 let profile = store.get('tb_profile', null);   // {freq, focus, overload, back}
 let workouts = store.get('tb_workouts', []);   // [{id,date,type,minutes,kcal,exercises:[{name,sets,reps,weight}],note}]
-const save = () => { store.set('tb_profile', profile); store.set('tb_workouts', workouts); };
+let foods = store.get('tb_foods', []);        // [{id,date,name,kcal,protein}]
+const save = () => { store.set('tb_profile', profile); store.set('tb_workouts', workouts); store.set('tb_foods', foods); };
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {} // Browser soll Daten nicht von selbst löschen
 
 // ---------- Helpers ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -89,7 +92,7 @@ function render(tab) {
   location.hash = tab;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $('#view').innerHTML = '';
-  ({ trainer: viewTrainer, log: viewLog, week: viewWeek, profile: viewProfile }[tab] || viewTrainer)();
+  ({ trainer: viewTrainer, food: viewFood, log: viewLog, week: viewWeek, profile: viewProfile }[tab] || viewTrainer)();
 }
 
 function viewProfile() {
@@ -110,6 +113,7 @@ function viewProfile() {
     <p><button class="primary" id="saveP">Speichern</button></p>
   </div>
   <div class="card"><h2>Daten</h2>
+    <p class="muted">Deine Daten liegen <b>nur in diesem Browser auf diesem Gerät</b> – nicht auf GitHub und nicht in der Cloud. Sichere sie regelmäßig: Export speichert eine Datei (am iPhone in „Dateien“/iCloud), Import lädt sie wieder, z.B. auf einem neuen Handy.<br>Letztes Backup: ${(store.get('tb_meta', {}).lastBackup) || 'noch nie'}</p>
     <button id="exp">Export (JSON)</button>
     <button id="imp">Import</button>
   </div>`;
@@ -119,13 +123,13 @@ function viewProfile() {
   };
   $('#exp').onclick = () => {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify({ profile, workouts, trainer: TR }, null, 2)], { type: 'application/json' }));
-    a.download = 'training-buddy.json'; a.click();
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ profile, workouts, foods, trainer: TR }, null, 2)], { type: 'application/json' }));
+    a.download = 'training-buddy.json'; a.click(); store.set('tb_meta', { lastBackup: today() }); setTimeout(() => viewProfile(), 300);
   };
   $('#imp').onclick = () => {
     const i = document.createElement('input'); i.type = 'file'; i.accept = '.json';
     i.onchange = async () => {
-      try { const d = JSON.parse(await i.files[0].text()); profile = d.profile; workouts = d.workouts || []; if (d.trainer) { Object.assign(TR, d.trainer); saveTR(); } save(); render('log'); }
+      try { const d = JSON.parse(await i.files[0].text()); profile = d.profile; workouts = d.workouts || []; foods = d.foods || []; if (d.trainer) { Object.assign(TR, d.trainer); saveTR(); } save(); render('log'); }
       catch { alert('Datei konnte nicht gelesen werden.'); }
     };
     i.click();
@@ -253,6 +257,12 @@ function analyse(ws) {
     else tips.push(`Nacken: nur ${neckDays} Tag(e) mit Nacken-/Schulterblatt-Übungen. Ziel: 3–4× pro Woche die 5-Minuten-Einheit „Nacken & Haltung“ im Trainer, am besten an Bürotagen. Dazu: Bildschirm auf Augenhöhe und etwa stündlich die Haltung wechseln.`);
     tips.push('Bei Ausstrahlung in Arm oder Hand, Kribbeln, Taubheit, Schwindel oder starken Kopfschmerzen bitte ärztlich abklären lassen.');
   }
+  const fd = [...new Set(foods.filter(f => f.date >= ws && f.date <= addDays(ws, 6)).map(f => f.date))];
+  if (hasBody() && fd.length >= 3) {
+    const avgE = Math.round(fd.reduce((a, d) => a + sumF(eatenOn(d), 'kcal'), 0) / fd.length), avgB = Math.round(fd.reduce((a, d) => a + dayBudget(d), 0) / fd.length);
+    const diff = avgE - avgB;
+    tips.push(`Ernährung (${fd.length} Tage erfasst): Ø ${avgE} kcal bei einem Budget von Ø ${avgB}. ${Math.abs(diff) <= 150 ? 'Das passt gut zu deinem Ziel.' : diff > 0 ? `Du liegst ${diff} kcal drüber${profile.goal === 'bulk' ? ' – für Muskelaufbau ok, wenn du dabei Kraft steigerst.' : '.'}` : `Du liegst ${-diff} kcal drunter${profile.goal === 'cut' ? ' – solange du dich fit fühlst, ist das beim Abnehmen ok.' : ' – iss genug, damit Training und Erholung klappen.'}`}`);
+  } else if (hasBody()) tips.push('Ernährung: Trag an mindestens 3 Tagen pro Woche ein, was du isst – dann kann ich Budget und Realität vergleichen.');
   return { cur, days, cardioMin, kcal, volCur, volPrev, setsCur, backSets, backDays, prog, tips };
 }
 
@@ -566,6 +576,84 @@ function viewTrainer() {
   $('#size').onchange = e => { TR.size = +e.target.value; saveTR(); viewTrainer(); };
   $('#go').onclick = startSession;
   if ($('#neckYes')) { $('#neckYes').onclick = () => { profile.neck = true; save(); viewTrainer(); }; $('#neckNo').onclick = () => { profile.neck = false; save(); viewTrainer(); }; }
+}
+
+// ---------- Ernährung ----------
+let foodDate = today();
+const GOALS = { cut: ['Abnehmen', -500], hold: ['Gewicht halten', 0], bulk: ['Muskelaufbau', 300] };
+const hasBody = () => profile.age && profile.height && profile.weight && profile.sex;
+// Mifflin-St-Jeor-Grundumsatz × 1,2 (Alltag ohne Sport); Training kommt tageweise dazu
+const baseKcal = () => {
+  const bmr = 10 * profile.weight + 6.25 * profile.height - 5 * profile.age + (profile.sex === 'm' ? 5 : -161);
+  const floor = profile.sex === 'm' ? 1500 : 1200;
+  return Math.round(Math.max(floor, bmr * 1.2 + GOALS[profile.goal || 'hold'][1]));
+};
+const burnedOn = d => workouts.filter(w => w.date === d).reduce((a, w) => a + (w.kcal || 0), 0);
+const dayBudget = d => baseKcal() + burnedOn(d);
+const eatenOn = d => foods.filter(f => f.date === d);
+const sumF = (arr, k) => arr.reduce((a, f) => a + (+f[k] || 0), 0);
+
+function viewFood() {
+  const sel = (id, opts, v) => `<select id="${id}">${opts.map(([k, l]) => `<option value="${k}" ${k == v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  if (!hasBody()) {
+    $('#view').innerHTML = `
+    <div class="card">
+      <h2>🍽 Erst kurz zu dir</h2>
+      <p class="muted">Damit ich deinen Tagesbedarf schätzen kann (Grundumsatz + Alltag + Training). Die Daten bleiben nur auf deinem Gerät.</p>
+      <div class="row"><div><label>Geschlecht</label>${sel('sex', [['m', 'männlich'], ['w', 'weiblich']], profile.sex || 'm')}</div>
+        <div><label>Alter</label><input type="number" id="age" min="14" max="99" value="${profile.age || ''}"></div></div>
+      <div class="row"><div><label>Größe (cm)</label><input type="number" id="height" min="120" max="230" value="${profile.height || ''}"></div>
+        <div><label>Gewicht (kg)</label><input type="number" id="weight" min="35" max="250" step="0.1" value="${profile.weight || ''}"></div></div>
+      <label>Ziel</label>${sel('goal', Object.entries(GOALS).map(([k, v]) => [k, v[0]]), profile.goal || 'hold')}
+      <p><button class="primary" id="saveBody">Speichern</button></p>
+      <p class="muted">Schätzwerte, keine medizinische Beratung.</p>
+    </div>`;
+    $('#saveBody').onclick = () => {
+      const b = { sex: $('#sex').value, age: +$('#age').value, height: +$('#height').value, weight: +$('#weight').value, goal: $('#goal').value };
+      if (!b.age || !b.height || !b.weight) return alert('Bitte Alter, Größe und Gewicht ausfüllen.');
+      Object.assign(profile, b); save(); viewFood();
+    };
+    return;
+  }
+  const list = eatenOn(foodDate), eaten = sumF(list, 'kcal'), prot = sumF(list, 'protein');
+  const burned = burnedOn(foodDate), budget = dayBudget(foodDate), left = budget - eaten;
+  const pct = Math.min(100, Math.round(eaten / budget * 100));
+  const recents = {}; [...foods].sort((a, b) => a.id - b.id).forEach(f => recents[f.name] = f);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(foodDate, i - 6));
+  $('#view').innerHTML = `
+  <div class="card">
+    <div class="row"><button id="fprev">←</button><div style="text-align:center;flex:3"><b>${foodDate === today() ? 'Heute' : foodDate}</b></div><button id="fnext">→</button></div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <div><div class="stat">${eaten}</div><div class="muted">gegessen</div></div>
+      <div><div class="stat ${left < 0 ? 'warn' : 'ok'}">${left}</div><div class="muted">${left < 0 ? 'drüber' : 'übrig'}</div></div>
+      <div><div class="stat">${budget}</div><div class="muted">Budget</div></div>
+    </div>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="muted">Budget = ${baseKcal()} kcal (Grundumsatz + Alltag, Ziel ${GOALS[profile.goal || 'hold'][0]}) + ${burned} kcal Training. Eiweiß: ${prot} g (Richtwert ~${Math.round(profile.weight * 1.6)} g).</div>
+  </div>
+  <div class="card">
+    <h2>Essen hinzufügen</h2>
+    <label>Was?</label><input id="fname" list="flist" placeholder="z.B. Haferflocken mit Milch" autocomplete="off">
+    <datalist id="flist">${Object.keys(recents).map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+    <div class="row"><div><label>kcal</label><input type="number" id="fkcal" min="0"></div><div><label>Eiweiß (g, optional)</label><input type="number" id="fprot" min="0"></div></div>
+    <p><button class="primary" id="fadd">Hinzufügen</button></p>
+  </div>
+  <div class="card"><h2>Gegessen</h2>${list.length ? list.map(f => `<div class="entry"><b>${esc(f.name)}</b> · ${f.kcal} kcal${f.protein ? ' · ' + f.protein + ' g Eiweiß' : ''}
+    <button data-fdel="${f.id}" style="float:right;margin-top:-4px">🗑</button></div>`).join('') : '<p class="muted">Noch nichts eingetragen.</p>'}</div>
+  <div class="card"><h2>Letzte 7 Tage</h2>${days.map(d => { const e = sumF(eatenOn(d), 'kcal'); return `<div class="entry"><b>${d.slice(5)}</b> · ${e ? e + ' / ' + dayBudget(d) + ' kcal' : '<span class="muted">–</span>'}</div>`; }).join('')}
+    <p><button id="editBody">Körperdaten / Ziel ändern</button></p></div>`;
+  $('#fprev').onclick = () => { foodDate = addDays(foodDate, -1); viewFood(); };
+  $('#fnext').onclick = () => { foodDate = addDays(foodDate, 1); viewFood(); };
+  $('#fname').onchange = () => { const r = recents[$('#fname').value]; if (r) { $('#fkcal').value = r.kcal; $('#fprot').value = r.protein || ''; } };
+  $('#fadd').onclick = () => {
+    const name = $('#fname').value.trim(), kcal = +$('#fkcal').value;
+    if (!name || !kcal) return alert('Bitte Name und kcal angeben.');
+    foods.push({ id: Date.now(), date: foodDate, name, kcal, protein: +$('#fprot').value || 0 }); save(); viewFood();
+  };
+  document.querySelectorAll('[data-fdel]').forEach(b => b.onclick = () => { foods = foods.filter(f => f.id != b.dataset.fdel); save(); viewFood(); });
+  $('#editBody').onclick = () => { delete profile.age; save(); viewFood(); };
 }
 
 document.querySelector('nav').onclick = e => e.target.dataset.tab && render(e.target.dataset.tab);
