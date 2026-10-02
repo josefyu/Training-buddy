@@ -61,7 +61,7 @@ const weekStart = d => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDat
 const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return iso(x); };
 const inWeek = (w, ws) => w.date >= ws && w.date <= addDays(ws, 6);
 const FOCUS = { ausdauer: 'Ausdauer', kraft: 'Kraft', fitness: 'Allgemeine Fitness' };
-const BACK_RE = /plank|unterarmstütz|bird.?dog|dead.?bug|rudern|row|kreuzheben|deadlift|brücke|bridge|superman|hyperext|rückenstreck|face.?pull|latzug|klimmzug|pull.?up|seitstütz|hip.?thrust|glute/i;
+const BACK_RE = /plank|unterarmstütz|bird.?dog|dead.?bug|rudern|row|kreuzheben|deadlift|brücke|bridge|superman|hyperext|rückenstreck|face.?pull|latzug|lat.?pull|klimmzug|pull.?up|seitstütz|hip.?thrust|glute|reverse.?fly|rückenstrecker/i;
 const vol = e => (+e.sets || 0) * (+e.reps || 0) * (+e.weight || 0);
 const sets = e => +e.sets || 0;
 
@@ -126,6 +126,15 @@ function exRow(e = {}) {
 function viewLog() {
   const names = [...new Set(workouts.flatMap(w => (w.exercises || []).map(e => e.name)))];
   $('#view').innerHTML = `
+  <div class="card">
+    <h2>💡 Vorschlag: Rücken-Einstieg (2× pro Woche)</h2>
+    <ul class="muted">
+      <li>Rudergerät 3×12 · Latzug 3×12 · Rückenstrecker 2×12</li>
+      <li>Beinpresse 3×12 · Plank 3×30 s · Bird Dog 2×8/Seite</li>
+      <li>Schultergerät 2×12 als Ergänzung</li>
+    </ul>
+    <div class="muted">Starte so leicht, dass 2–3 Wdh. übrig bleiben. Nächste Woche: +1 Wdh. oder +2,5 kg.</div>
+  </div>
   <div class="card" id="sundayBanner"></div>
   <div class="card">
     <h2>Training erfassen</h2>
@@ -141,7 +150,7 @@ function viewLog() {
       <label>Übungen (Sätze × Wdh. × kg; kg leer = Körpergewicht)</label>
       <div id="exs"></div>
       <button type="button" id="addEx">+ Übung</button>
-      <datalist id="exlist">${names.map(n => `<option value="${esc(n)}">`).join('')}<option value="Plank"><option value="Bird Dog"><option value="Dead Bug"><option value="Rudern"><option value="Glute Bridge"><option value="Kniebeuge"><option value="Liegestütz"></datalist>
+      <datalist id="exlist">${names.map(n => `<option value="${esc(n)}">`).join('')}<option value="Rudergerät"><option value="Latzug"><option value="Rückenstrecker"><option value="Reverse Fly"><option value="Beinpresse"><option value="Plank"><option value="Bird Dog"><option value="Dead Bug"><option value="Glute Bridge"><option value="Hip Thrust"><option value="Schulterdrücken (Gerät)"><option value="Kniebeuge"><option value="Liegestütz"></datalist>
     </div>
     <label>Notiz (z.B. Rücken, Energie)</label><input id="note">
     <p><button class="primary" id="add">Speichern</button></p>
