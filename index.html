@@ -34,6 +34,16 @@
   .bar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; margin:6px 0 }
   .bar > div { height:100%; background:var(--accent); width:0; transition:width .25s linear }
   .run-work { border-color:var(--ok) } .run-rest { border-color:var(--accent) }
+  .dial { display:block; width:min(78vw,300px); margin:6px auto }
+  .dial .face { fill:var(--card); stroke:var(--line); stroke-width:3 }
+  .dial .track { fill:none; stroke:var(--line); stroke-width:8 }
+  .dial .arc { fill:none; stroke:var(--accent); stroke-width:8; stroke-linecap:round; transform:rotate(-90deg); transform-origin:100px 100px }
+  .dial.work .arc, .dial.work .hand { stroke:var(--ok) } .dial.work .hub { fill:var(--ok) }
+  .dial .tick { stroke:var(--muted); stroke-width:1.5 } .dial .tick.big { stroke:var(--fg); stroke-width:2.5 }
+  .dial .num { fill:var(--muted); font-size:10px; text-anchor:middle; dominant-baseline:central }
+  .dial .hand { stroke:var(--accent); stroke-width:3; stroke-linecap:round }
+  .dial .hub { fill:var(--accent) }
+  .dial .digi { fill:var(--fg); font-size:26px; font-weight:700; text-anchor:middle; font-variant-numeric:tabular-nums }
   .run button { padding:14px 8px }
 </style>
 </head>
@@ -424,8 +434,7 @@ function buildRunView() {
   <div class="card run ${s.kind === 'work' || s.kind === 'run' ? 'run-work' : 'run-rest'}">
     <div class="muted" style="text-align:center">${label} · Schritt ${run.i + 1}/${steps.length}</div>
     <div class="runname">${esc(s.name)}</div>
-    <div class="clock" id="clock">${fmt(s.secs)}</div>
-    <div class="bar"><div id="barfill"></div></div>
+    ${dialSvg(s.kind === 'work' || s.kind === 'run')}
     <div class="warn" id="sw" style="text-align:center;min-height:1.4em;font-weight:600"></div>
     <p class="muted">${esc(s.cue || '')}</p>
     <p class="muted">${nxt ? 'Als Nächstes: <b>' + esc(nxt.name) + '</b>' : 'Letzter Schritt!'}</p>
@@ -438,16 +447,39 @@ function buildRunView() {
   $('#pause').onclick = () => {
     if (run.paused) { run.end = Date.now() + run.rem; run.paused = false; }
     else { run.rem = run.end - Date.now(); run.paused = true; }
-    buildRunView(); updateClock(Math.ceil((run.paused ? run.rem : run.end - Date.now()) / 1000), cur());
+    buildRunView();
   };
   $('#skip').onclick = () => { if (advance(false)) { run.end = Date.now() + cur().secs * 1000; run.paused = false; beep(1200, 0.2); buildRunView(); } else finishSession(); };
   $('#stop').onclick = () => { if (confirm('Training beenden?')) finishSession(true); };
+  updateClock(run.paused ? run.rem : run.end - Date.now(), s);
 }
 
-function updateClock(rem, s) {
+// Analoges Ziffernblatt: Sekundenzeiger läuft im Uhrzeigersinn, der Ring zeigt die verbleibende Zeit des Schritts
+const CIRC = 2 * Math.PI * 86;
+function dialSvg(work) {
+  let t = '';
+  for (let i = 0; i < 60; i++) {
+    const a = i * 6 * Math.PI / 180, big = i % 5 === 0, r1 = 76, r2 = big ? 68 : 71;
+    t += `<line class="tick ${big ? 'big' : ''}" x1="${100 + r1 * Math.sin(a)}" y1="${100 - r1 * Math.cos(a)}" x2="${100 + r2 * Math.sin(a)}" y2="${100 - r2 * Math.cos(a)}"/>`;
+    if (big) t += `<text class="num" x="${100 + 58 * Math.sin(a)}" y="${100 - 58 * Math.cos(a)}">${i === 0 ? 60 : i}</text>`;
+  }
+  return `<svg class="dial ${work ? 'work' : ''}" viewBox="0 0 200 200" role="img" aria-label="Timer">
+    <circle class="face" cx="100" cy="100" r="96"/>
+    <circle class="track" cx="100" cy="100" r="86"/>
+    <circle class="arc" id="arc" cx="100" cy="100" r="86" stroke-dasharray="${CIRC}" stroke-dashoffset="0"/>
+    ${t}
+    <text class="digi" id="clock" x="100" y="138">0:00</text>
+    <g id="hand"><line class="hand" x1="100" y1="112" x2="100" y2="34"/></g>
+    <circle class="hub" cx="100" cy="100" r="5"/>
+  </svg>`;
+}
+
+function updateClock(remMs, s) {
   const c = $('#clock'); if (!c) return;
-  c.textContent = fmt(Math.max(0, rem));
-  $('#barfill').style.width = Math.min(100, (s.secs - rem) / s.secs * 100) + '%';
+  remMs = Math.max(0, Math.min(s.secs * 1000, remMs));
+  c.textContent = fmt(Math.ceil(remMs / 1000));
+  $('#arc').style.strokeDashoffset = CIRC * (1 - remMs / (s.secs * 1000));
+  $('#hand').setAttribute('transform', `rotate(${((s.secs * 1000 - remMs) / 1000 % 60) * 6} 100 100)`);
 }
 
 function tick() {
@@ -461,7 +493,7 @@ function tick() {
   const s = cur(), rem = Math.ceil((run.end - now) / 1000);
   if (rem > 0 && rem <= 3 && rem !== run.lastBeep) { run.lastBeep = rem; beep(700, 0.08); }
   if (s.switch && !run.half && rem <= s.secs / 2) { run.half = true; beep(1000, 0.3); const sw = $('#sw'); if (sw) sw.textContent = '↔ Seite wechseln!'; }
-  updateClock(rem, s);
+  updateClock(run.end - now, s);
 }
 
 document.addEventListener('visibilitychange', () => {
