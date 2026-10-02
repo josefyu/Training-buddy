@@ -69,6 +69,7 @@ const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.get
 const inWeek = (w, ws) => w.date >= ws && w.date <= addDays(ws, 6);
 const FOCUS = { ausdauer: 'Ausdauer', kraft: 'Kraft', fitness: 'Allgemeine Fitness' };
 const BACK_RE = /plank|unterarmstütz|bird.?dog|dead.?bug|rudern|row|good.?morning|kreuzheben|deadlift|brücke|bridge|superman|hyperext|rückenstreck|face.?pull|latzug|lat.?pull|klimmzug|pull.?up|seitstütz|hip.?thrust|glute|reverse.?fly|rückenstrecker/i;
+const NECK_RE = /kinn einziehen|chin.?tuck|schulterblatt|wall.?angel|prone.?y|nackendehnung|brustdehnung|face.?pull|reverse.?fly|rudern|row|latzug|lat.?pull/i;
 const vol = e => (+e.sets || 0) * (+e.reps || 0) * (+e.weight || 1); // Körpergewicht zählt als 1
 const sets = e => +e.sets || 0;
 
@@ -82,7 +83,7 @@ function render(tab) {
 }
 
 function viewProfile() {
-  const p = profile || { freq: 3, focus: 'fitness', overload: true, back: true };
+  const p = profile || { freq: 3, focus: 'fitness', overload: true, back: true, neck: true };
   $('#view').innerHTML = `
   <div class="card">
     <h2>${profile ? 'Deine Ziele' : 'Willkommen! Erzähl mir von deinem Training'}</h2>
@@ -94,6 +95,8 @@ function viewProfile() {
     <select id="overload"><option value="1" ${p.overload?'selected':''}>Ja, bitte tracken</option><option value="0" ${!p.overload?'selected':''}>Nein</option></select>
     <label>Rückenschmerzen vorbeugen</label>
     <select id="back"><option value="1" ${p.back?'selected':''}>Ja, bitte berücksichtigen</option><option value="0" ${!p.back?'selected':''}>Nein</option></select>
+    <label>Nackenschmerzen vorbeugen</label>
+    <select id="neck"><option value="1" ${p.neck?'selected':''}>Ja, bitte berücksichtigen</option><option value="0" ${!p.neck?'selected':''}>Nein</option></select>
     <p><button class="primary" id="saveP">Speichern</button></p>
   </div>
   <div class="card"><h2>Daten</h2>
@@ -101,7 +104,7 @@ function viewProfile() {
     <button id="imp">Import</button>
   </div>`;
   $('#saveP').onclick = () => {
-    profile = { freq: +$('#freq').value, focus: $('#focus').value, overload: $('#overload').value === '1', back: $('#back').value === '1' };
+    profile = { freq: +$('#freq').value, focus: $('#focus').value, overload: $('#overload').value === '1', back: $('#back').value === '1', neck: $('#neck').value === '1' };
     save(); render('trainer');
   };
   $('#exp').onclick = () => {
@@ -157,7 +160,7 @@ function viewLog() {
       <label>Übungen (Sätze × Wdh. × kg; kg leer = Körpergewicht)</label>
       <div id="exs"></div>
       <button type="button" id="addEx">+ Übung</button>
-      <datalist id="exlist">${names.map(n => `<option value="${esc(n)}">`).join('')}<option value="Rudergerät"><option value="Latzug"><option value="Rückenstrecker"><option value="Reverse Fly"><option value="Beinpresse"><option value="Plank"><option value="Bird Dog"><option value="Dead Bug"><option value="Glute Bridge"><option value="Hip Thrust"><option value="Schulterdrücken (Gerät)"><option value="Kniebeuge"><option value="Liegestütz"></datalist>
+      <datalist id="exlist">${names.map(n => `<option value="${esc(n)}">`).join('')}<option value="Rudergerät"><option value="Latzug"><option value="Rückenstrecker"><option value="Reverse Fly"><option value="Beinpresse"><option value="Plank"><option value="Bird Dog"><option value="Dead Bug"><option value="Glute Bridge"><option value="Hip Thrust"><option value="Schulterdrücken (Gerät)"><option value="Kniebeuge"><option value="Liegestütz"><option value="Kinn einziehen"><option value="Schulterblatt-Rückzug"><option value="Wall Angels"><option value="Prone Y"></datalist>
     </div>
     <label>Notiz (z.B. Rücken, Energie)</label><input id="note">
     <p><button class="primary" id="add">Speichern</button></p>
@@ -207,6 +210,7 @@ function analyse(ws) {
   const volCur = sum(exs(cur).map(e => ({ v: vol(e) })), x => x.v), volPrev = sum(exs(prev).map(e => ({ v: vol(e) })), x => x.v);
   const setsCur = sum(exs(cur).map(e => ({ v: sets(e) })), x => x.v), setsPrev = sum(exs(prev).map(e => ({ v: sets(e) })), x => x.v);
   const backSets = sum(exs(cur).filter(e => BACK_RE.test(e.name)).map(e => ({ v: sets(e) })), x => x.v);
+  const neckDays = new Set(cur.filter(w => (w.exercises || []).some(e => NECK_RE.test(e.name))).map(w => w.date)).size;
   const backDays = new Set(cur.filter(w => (w.exercises || []).some(e => BACK_RE.test(e.name))).map(w => w.date)).size;
 
   // per-exercise progression vs. last week (best set weight, else total reps)
@@ -233,6 +237,11 @@ function analyse(ws) {
     if (backDays >= 2) tips.push(`Rücken: ${backSets} Sätze an ${backDays} Tagen für Rücken/Core – genau richtig als Prävention.`);
     else tips.push(`Rücken: nur ${backSets} Sätze an ${backDays} Tag(en). Ziel: 2×/Woche je 2–3 Übungen, z.B. Bird Dog, Plank, Glute Bridge, Rudern (je 2–3 Sätze, ruhig und kontrolliert). Beim Laufen: auf Rumpfspannung und lockere Hüfte achten.`);
     tips.push('Bei anhaltenden oder ausstrahlenden Schmerzen, Taubheit oder Schwäche bitte ärztlich abklären lassen.');
+  }
+  if (profile.neck) {
+    if (neckDays >= 3) tips.push(`Nacken: an ${neckDays} Tagen Schulterblatt-/Nackenübungen – so hält sich der Nacken locker.`);
+    else tips.push(`Nacken: nur ${neckDays} Tag(e) mit Nacken-/Schulterblatt-Übungen. Ziel: 3–4× pro Woche die 5-Minuten-Einheit „Nacken & Haltung“ im Trainer, am besten an Bürotagen. Dazu: Bildschirm auf Augenhöhe und etwa stündlich die Haltung wechseln.`);
+    tips.push('Bei Ausstrahlung in Arm oder Hand, Kribbeln, Taubheit, Schwindel oder starken Kopfschmerzen bitte ärztlich abklären lassen.');
   }
   return { cur, days, cardioMin, kcal, volCur, volPrev, setsCur, backSets, backDays, prog, tips };
 }
@@ -277,6 +286,10 @@ const EX = {
   hampel:      { name: 'Hampelmann', cat: 'cardio', cue: 'Gleichmäßiger Rhythmus, weich landen.' },
   kniehub:     { name: 'Hohe Knie', cat: 'cardio', cue: 'Knie abwechselnd auf Hüfthöhe, Oberkörper aufrecht, Bauch fest.' },
   skater:      { name: 'Skater', cat: 'cardio', cue: 'Seitliche Sprünge von Bein zu Bein, Oberkörper leicht nach vorn.' },
+  kinn:        { name: 'Kinn einziehen', cat: 'neck', cue: 'Aufrecht, Kinn waagerecht nach hinten schieben (Doppelkinn), 5 s halten, lösen. Kein Nicken.' },
+  schulterblatt: { name: 'Schulterblatt-Rückzug', cat: 'neck', cue: 'Ellbogen seitlich angewinkelt, Schulterblätter nach hinten-unten zusammenziehen, 3 s halten, Nacken lang.' },
+  wallangel:   { name: 'Wall Angels', cat: 'neck', cue: 'Rücken, Kopf und Arme an der Wand, Arme langsam hoch und runter gleiten – nur so weit, wie es ohne Hohlkreuz geht.' },
+  proney:      { name: 'Prone Y', cat: 'neck', cue: 'Bauchlage, Stirn knapp über dem Boden, Arme in Y-Form anheben, Daumen nach oben, Nacken lang.' },
   climber:     { name: 'Mountain Climber', cat: 'cardio', cue: 'Hochstütz, Knie abwechselnd zur Brust, Rücken gerade.' },
 };
 const WARM = [
@@ -295,7 +308,7 @@ function pickExercises(n) {
   const order = ORDER[profile.focus] || ORDER.fitness, used = new Set(), out = [];
   for (let i = 0; i < n; i++) {
     let pool = Object.entries(EX).filter(([k, e]) => e.cat === order[i % order.length] && !used.has(k));
-    if (!pool.length) pool = Object.entries(EX).filter(([k]) => !used.has(k));
+    if (!pool.length) pool = Object.entries(EX).filter(([k, e]) => !used.has(k) && (profile.neck || e.cat !== 'neck'));
     if (!pool.length) break;
     const [k, e] = pool[(TR.sessions + i) % pool.length];
     used.add(k); out.push(e);
@@ -309,13 +322,31 @@ function pickExercises(n) {
       out[idx] = spare;
     }
   }
+  if (profile.neck) { // mindestens 1 Nacken/Schulterblatt-Übung
+    const isN = e => e.cat === 'neck', isB = e => BACK_RE.test(e.name);
+    if (!out.some(isN)) {
+      let idx = -1; for (let j = out.length - 1; j >= 0; j--) if (!isB(out[j])) { idx = j; break; }
+      if (idx >= 0) out[idx] = Object.values(EX).filter(isN)[TR.sessions % 4];
+    }
+  }
   return out;
 }
 
 function buildPlan() {
-  const mode = TR.mode, L = TR.lv[mode], steps = [], info = [];
+  const mode = TR.mode, L = TR.lv[mode] || 0, steps = [], info = [];
   const S = (name, secs, kind, extra = {}) => steps.push({ name, secs, kind, ...extra });
   S('Mach dich bereit', 5, 'prep', { cue: 'Handy abstellen, Platz schaffen.' });
+  if (mode === 'neck') {
+    S('Schulterkreisen', 30, 'warm', { cue: 'Schultern langsam nach hinten kreisen, Nacken lang.' });
+    const N = [
+      [EX.kinn.name, 40, EX.kinn.cue], [EX.schulterblatt.name, 40, EX.schulterblatt.cue], [EX.wallangel.name, 45, EX.wallangel.cue],
+      ['Nackendehnung seitlich', 40, 'Ohr sanft Richtung Schulter, Gegenschulter locker nach unten, kein Wippen. Bei halber Zeit Seite wechseln.', true],
+      ['Brustdehnung (Türrahmen)', 40, 'Unterarm am Türrahmen, Schritt nach vorn, Brust öffnen, Schultern tief.'],
+    ];
+    N.forEach(([n, secs, cue, sw], i) => { S(n, secs, 'work', { cue, switch: sw }); if (i < N.length - 1) S('Kurz lösen', 10, 'rest', { cue: 'Schultern fallen lassen.' }); });
+    info.push('Kinn einziehen · Schulterblatt-Rückzug · Wall Angels', 'Nacken- und Brustdehnung', 'Jeden Tag machbar, ideal an Bürotagen');
+    return { mode, title: 'Nacken & Haltung', steps, info };
+  }
   if (mode === 'run') {
     const run = 60 + 20 * L, walk = Math.max(60, 90 - 5 * L);
     const n = Math.max(2, Math.floor(([1200, 1800, 2400][TR.size] - 480) / (run + walk)));
@@ -330,14 +361,20 @@ function buildPlan() {
   }
   const work = 30 + 4 * Math.min(L, 5), rest = L >= 5 ? 15 : 20, rounds = 3 + (L >= 6 ? 1 : 0);
   const exs = pickExercises([4, 6, 8][TR.size]);
-  WARM.forEach(([n, cue]) => S(n, 30, 'warm', { cue }));
+  const warm = profile.neck ? [['Schulterkreisen', 'Schultern langsam nach hinten kreisen, Nacken lang.'], ...WARM] : WARM;
+  warm.forEach(([n, cue]) => S(n, 30, 'warm', { cue }));
   for (let r = 1; r <= rounds; r++) exs.forEach((e, i) => {
     S(e.name, work, 'work', { cue: e.cue, round: r, rounds, switch: e.switch });
     if (r === rounds && i === exs.length - 1) return;
     i === exs.length - 1 ? S('Pause (Runde geschafft)', rest + 25, 'rest', { cue: 'Trinken, Atmen.' }) : S('Pause', rest, 'rest', { cue: 'Locker bleiben.' });
   });
+  if (profile.neck) {
+    S('Nackendehnung seitlich', 40, 'cool', { cue: 'Ohr sanft Richtung Schulter, Gegenschulter locker nach unten. Bei halber Zeit Seite wechseln.', switch: true });
+    S('Brustdehnung (Türrahmen)', 40, 'cool', { cue: 'Unterarm am Türrahmen, Schritt nach vorn, Brust öffnen, Schultern tief.' });
+  }
   S('Kindshaltung', 45, 'cool', { cue: 'Knie am Boden, Gesäß Richtung Fersen, Arme nach vorn – entspannt den unteren Rücken.' });
-  info.push(`${exs.length} Übungen × ${rounds} Runden`, `${work} s Belastung / ${rest} s Pause`, exs.map(e => e.name).join(' · '), 'Aufwärmen 90 s + Dehnen 45 s');
+  info.push(`${exs.length} Übungen × ${rounds} Runden`, `${work} s Belastung / ${rest} s Pause`, exs.map(e => e.name).join(' · '), `Aufwärmen ${warm.length * 30} s + Dehnen`);
+  if (profile.neck) info.push('🛡 Nacken-Schutz: Schulterblatt-Übung + Nackendehnung eingebaut');
   if (profile.back) info.push('🛡 Rücken-Schutz: mindestens 2 Rücken/Core-Übungen eingebaut');
   return { mode, title: `Zuhause · ${exs.length} Übungen`, steps, info };
 }
@@ -462,11 +499,13 @@ function finishSession(early) {
       note: ['Trainer: ' + r.plan.title + (early ? ' (vorzeitig beendet)' : ''), note].filter(Boolean).join(' · '),
     });
     TR.sessions++;
-    let lv = TR.lv[mode];
+    let lv = TR.lv[mode] || 0;
+    if (mode !== 'neck') {
     if (rate === 'easy') { lv++; TR.streak[mode] = 0; }
     else if (rate === 'hard') { lv--; TR.streak[mode] = 0; }
     else if (!early && ++TR.streak[mode] >= 2) { lv++; TR.streak[mode] = 0; }
     TR.lv[mode] = Math.max(0, Math.min(10, lv));
+    }
     saveTR(); save(); leave('log');
   };
 }
@@ -474,13 +513,14 @@ function finishSession(early) {
 function viewTrainer() {
   const plan = buildPlan(), total = plan.steps.reduce((a, s) => a + s.secs, 0);
   $('#view').innerHTML = `
+  ${profile.neck === undefined ? `<div class="card"><h2>Nacken auch berücksichtigen?</h2><p class="muted">Dann baue ich Schulterblatt-Übungen und Nackendehnung in dein Training ein.</p><div class="row"><button class="primary" id="neckYes">Ja</button><button id="neckNo">Nein</button></div></div>` : ''}
   <div class="card">
     <h2>🧑‍🏫 Dein Trainer</h2>
     <div class="row">
-      <div><label>Training</label><select id="mode"><option value="home">Zuhause (Körpergewicht)</option><option value="run">Lauf-Intervalle</option></select></div>
-      <div><label>Länge</label><select id="size">${SIZES.map((s, i) => `<option value="${i}">${s}</option>`).join('')}</select></div>
+      <div><label>Training</label><select id="mode"><option value="home">Zuhause (Körpergewicht)</option><option value="run">Lauf-Intervalle</option><option value="neck">Nacken &amp; Haltung (5 min)</option></select></div>
+      <div><label>Länge</label><select id="size" ${TR.mode === 'neck' ? 'disabled' : ''}>${SIZES.map((s, i) => `<option value="${i}">${s}</option>`).join('')}</select></div>
     </div>
-    <p class="muted">Du brauchst nur dein Handy und etwas Platz. Level ${TR.lv[TR.mode]}/10 · Ziel ${profile.freq}× pro Woche · Fokus ${FOCUS[profile.focus]}.</p>
+    <p class="muted">Du brauchst nur dein Handy und etwas Platz. ${TR.mode === 'neck' ? '' : 'Level ' + (TR.lv[TR.mode] || 0) + '/10 · '}Ziel ${profile.freq}× pro Woche · Fokus ${FOCUS[profile.focus]}.</p>
   </div>
   <div class="card">
     <h2>${esc(plan.title)}</h2>
@@ -493,6 +533,7 @@ function viewTrainer() {
   $('#mode').onchange = e => { TR.mode = e.target.value; saveTR(); viewTrainer(); };
   $('#size').onchange = e => { TR.size = +e.target.value; saveTR(); viewTrainer(); };
   $('#go').onclick = startSession;
+  if ($('#neckYes')) { $('#neckYes').onclick = () => { profile.neck = true; save(); viewTrainer(); }; $('#neckNo').onclick = () => { profile.neck = false; save(); viewTrainer(); }; }
 }
 
 document.querySelector('nav').onclick = e => e.target.dataset.tab && render(e.target.dataset.tab);
