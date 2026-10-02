@@ -29,13 +29,20 @@
   ul { margin:6px 0; padding-left:20px }
   .entry { border-top:1px solid var(--line); padding:8px 0 } .entry:first-of-type { border-top:0 }
   .hidden { display:none }
+  .clock { font-size:4.5rem; font-weight:700; text-align:center; font-variant-numeric:tabular-nums; margin:4px 0 }
+  .runname { font-size:1.6rem; font-weight:700; text-align:center; margin-top:6px }
+  .bar { height:10px; background:var(--line); border-radius:6px; overflow:hidden; margin:6px 0 }
+  .bar > div { height:100%; background:var(--accent); width:0; transition:width .25s linear }
+  .run-work { border-color:var(--ok) } .run-rest { border-color:var(--accent) }
+  .run button { padding:14px 8px }
 </style>
 </head>
 <body>
 <main>
   <h1>🏃 Training Buddy</h1>
   <nav>
-    <button data-tab="log">Training</button>
+    <button data-tab="trainer">Trainer</button>
+    <button data-tab="log">Log</button>
     <button data-tab="week">Wochenanalyse</button>
     <button data-tab="profile">Ziele</button>
   </nav>
@@ -61,17 +68,17 @@ const weekStart = d => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDat
 const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return iso(x); };
 const inWeek = (w, ws) => w.date >= ws && w.date <= addDays(ws, 6);
 const FOCUS = { ausdauer: 'Ausdauer', kraft: 'Kraft', fitness: 'Allgemeine Fitness' };
-const BACK_RE = /plank|unterarmstütz|bird.?dog|dead.?bug|rudern|row|kreuzheben|deadlift|brücke|bridge|superman|hyperext|rückenstreck|face.?pull|latzug|lat.?pull|klimmzug|pull.?up|seitstütz|hip.?thrust|glute|reverse.?fly|rückenstrecker/i;
-const vol = e => (+e.sets || 0) * (+e.reps || 0) * (+e.weight || 0);
+const BACK_RE = /plank|unterarmstütz|bird.?dog|dead.?bug|rudern|row|good.?morning|kreuzheben|deadlift|brücke|bridge|superman|hyperext|rückenstreck|face.?pull|latzug|lat.?pull|klimmzug|pull.?up|seitstütz|hip.?thrust|glute|reverse.?fly|rückenstrecker/i;
+const vol = e => (+e.sets || 0) * (+e.reps || 0) * (+e.weight || 1); // Körpergewicht zählt als 1
 const sets = e => +e.sets || 0;
 
 // ---------- Views ----------
 function render(tab) {
-  tab = tab || (profile ? (location.hash.slice(1) || 'log') : 'profile');
+  tab = profile ? (tab || location.hash.slice(1) || 'trainer') : 'profile';
   location.hash = tab;
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $('#view').innerHTML = '';
-  ({ log: viewLog, week: viewWeek, profile: viewProfile })[tab]();
+  ({ trainer: viewTrainer, log: viewLog, week: viewWeek, profile: viewProfile }[tab] || viewTrainer)();
 }
 
 function viewProfile() {
@@ -95,17 +102,17 @@ function viewProfile() {
   </div>`;
   $('#saveP').onclick = () => {
     profile = { freq: +$('#freq').value, focus: $('#focus').value, overload: $('#overload').value === '1', back: $('#back').value === '1' };
-    save(); render('log');
+    save(); render('trainer');
   };
   $('#exp').onclick = () => {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([JSON.stringify({ profile, workouts }, null, 2)], { type: 'application/json' }));
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ profile, workouts, trainer: TR }, null, 2)], { type: 'application/json' }));
     a.download = 'training-buddy.json'; a.click();
   };
   $('#imp').onclick = () => {
     const i = document.createElement('input'); i.type = 'file'; i.accept = '.json';
     i.onchange = async () => {
-      try { const d = JSON.parse(await i.files[0].text()); profile = d.profile; workouts = d.workouts || []; save(); render('log'); }
+      try { const d = JSON.parse(await i.files[0].text()); profile = d.profile; workouts = d.workouts || []; if (d.trainer) { Object.assign(TR, d.trainer); saveTR(); } save(); render('log'); }
       catch { alert('Datei konnte nicht gelesen werden.'); }
     };
     i.click();
@@ -178,7 +185,7 @@ function viewLog() {
 
   const list = [...workouts].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id).slice(0, 15);
   $('#list').innerHTML = list.length ? list.map(w => `<div class="entry"><b>${w.date}</b> ${w.minutes ? `· ${w.minutes} min` : ''} ${w.kcal ? `· ${w.kcal} kcal` : ''}
-    ${w.exercises?.length ? `<div class="muted">${w.exercises.map(e => `${esc(e.name)} ${e.sets}×${e.reps}${e.weight ? ' @' + e.weight + 'kg' : ''}`).join(', ')}</div>` : ''}
+    ${w.exercises?.length ? `<div class="muted">${w.exercises.map(e => `${esc(e.name)} ${e.sets}×${e.reps}${e.unit === 's' ? ' s' : ''}${e.weight ? ' @' + e.weight + 'kg' : ''}`).join(', ')}</div>` : ''}
     ${w.note ? `<div class="muted">📝 ${esc(w.note)}</div>` : ''}
     <button data-del="${w.id}" style="float:right;margin-top:-28px">🗑</button></div>`).join('') : '<p class="muted">Noch nichts erfasst.</p>';
   $('#list').onclick = ev => { const id = ev.target.dataset.del; if (id && confirm('Eintrag löschen?')) { workouts = workouts.filter(w => w.id != id); save(); render('log'); } };
@@ -196,20 +203,20 @@ function analyse(ws) {
   const sum = (arr, f) => arr.reduce((a, w) => a + f(w), 0);
   const exs = arr => arr.flatMap(w => w.exercises || []);
   const days = new Set(cur.map(w => w.date)).size;
-  const cardioMin = sum(cur, w => w.minutes), kcal = sum(cur, w => w.kcal);
+  const cardioMin = sum(cur.filter(w => w.type !== 'kraft'), w => w.minutes), kcal = sum(cur, w => w.kcal);
   const volCur = sum(exs(cur).map(e => ({ v: vol(e) })), x => x.v), volPrev = sum(exs(prev).map(e => ({ v: vol(e) })), x => x.v);
   const setsCur = sum(exs(cur).map(e => ({ v: sets(e) })), x => x.v), setsPrev = sum(exs(prev).map(e => ({ v: sets(e) })), x => x.v);
   const backSets = sum(exs(cur).filter(e => BACK_RE.test(e.name)).map(e => ({ v: sets(e) })), x => x.v);
   const backDays = new Set(cur.filter(w => (w.exercises || []).some(e => BACK_RE.test(e.name))).map(w => w.date)).size;
 
   // per-exercise progression vs. last week (best set weight, else total reps)
-  const best = arr => { const m = {}; exs(arr).forEach(e => { const k = e.name.toLowerCase(); const o = m[k] ||= { name: e.name, w: 0, reps: 0 }; o.w = Math.max(o.w, e.weight || 0); o.reps = Math.max(o.reps, (e.sets || 0) * (e.reps || 0)); }); return m; };
+  const best = arr => { const m = {}; exs(arr).forEach(e => { const k = e.name.toLowerCase(); const o = m[k] ||= { name: e.name, w: 0, reps: 0, unit: e.unit }; o.w = Math.max(o.w, e.weight || 0); o.reps = Math.max(o.reps, (e.sets || 0) * (e.reps || 0)); }); return m; };
   const bc = best(cur), bp = best(prev);
   const prog = Object.entries(bc).filter(([k]) => bp[k]).map(([k, c]) => {
     const p = bp[k];
     const up = c.w > p.w || (c.w === p.w && c.reps > p.reps);
     const down = c.w < p.w || (c.w === p.w && c.reps < p.reps);
-    return { name: c.name, state: up ? 'up' : down ? 'down' : 'same', txt: c.w || p.w ? `${p.w}→${c.w} kg` : `${p.reps}→${c.reps} Wdh.` };
+    return { name: c.name, state: up ? 'up' : down ? 'down' : 'same', txt: c.w || p.w ? `${p.w}→${c.w} kg` : `${p.reps}→${c.reps} ${c.unit === 's' ? 's' : 'Wdh.'}` };
   });
 
   const tips = [];
@@ -250,6 +257,242 @@ function viewWeek() {
     $('#next').onclick = () => { ws = addDays(ws, 7); draw(); };
   };
   draw();
+}
+
+// ---------- Trainer (Timer-gestütztes Training ohne Geräte) ----------
+const TR = Object.assign({ lv: { home: 0, run: 0 }, streak: { home: 0, run: 0 }, sessions: 0, mode: 'home', size: 1 }, store.get('tb_trainer', {}));
+const saveTR = () => store.set('tb_trainer', TR);
+const fmt = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+const SIZES = ['Kurz', 'Mittel', 'Lang'];
+const EX = {
+  kniebeuge:   { name: 'Kniebeuge', cat: 'legs', cue: 'Füße schulterbreit, Brust hoch, Gesäß nach hinten unten, Knie zeigen über die Zehen.' },
+  ausfall:     { name: 'Ausfallschritte', cat: 'legs', cue: 'Großer Schritt nach vorn, hinteres Knie Richtung Boden, Oberkörper aufrecht. Seiten abwechseln.' },
+  liegestuetz: { name: 'Liegestütz', cat: 'push', cue: 'Körper bildet eine Linie, Bauch fest. Zu schwer? Knie abstützen.' },
+  plank:       { name: 'Plank', cat: 'core', cue: 'Unterarme am Boden, Körper gerade, Bauch und Gesäß fest. Nicht ins Hohlkreuz fallen.' },
+  seitstuetz:  { name: 'Seitstütz', cat: 'core', switch: true, cue: 'Seitlich auf dem Unterarm, Hüfte hoch. Bei halber Zeit kommt das Signal zum Seitenwechsel.' },
+  birddog:     { name: 'Bird Dog', cat: 'back', cue: 'Vierfüßler: gegenüberliegenden Arm und Bein strecken, Rücken ruhig. Seiten abwechseln.' },
+  deadbug:     { name: 'Dead Bug', cat: 'core', cue: 'Rückenlage, Arme hoch, Knie 90°. Gegenüberliegenden Arm und Bein strecken, unterer Rücken bleibt am Boden.' },
+  bridge:      { name: 'Glute Bridge', cat: 'back', cue: 'Rückenlage, Füße aufgestellt, Hüfte heben bis Schulter-Hüfte-Knie eine Linie sind, oben Gesäß anspannen.' },
+  superman:    { name: 'Superman', cat: 'back', cue: 'Bauchlage, Arme und Beine leicht anheben, Nacken lang, kurz halten.' },
+  hampel:      { name: 'Hampelmann', cat: 'cardio', cue: 'Gleichmäßiger Rhythmus, weich landen.' },
+  kniehub:     { name: 'Hohe Knie', cat: 'cardio', cue: 'Knie abwechselnd auf Hüfthöhe, Oberkörper aufrecht, Bauch fest.' },
+  skater:      { name: 'Skater', cat: 'cardio', cue: 'Seitliche Sprünge von Bein zu Bein, Oberkörper leicht nach vorn.' },
+  climber:     { name: 'Mountain Climber', cat: 'cardio', cue: 'Hochstütz, Knie abwechselnd zur Brust, Rücken gerade.' },
+};
+const WARM = [
+  ['Armkreisen', 'Große Kreise vorwärts und rückwärts, Schultern lockern.'],
+  ['Hüftkreisen', 'Hände in die Hüfte, große Kreise in beide Richtungen.'],
+  ['Katze-Kuh', 'Vierfüßler: Rücken abwechselnd rund und hohl, langsam atmen.'],
+];
+const ORDER = {
+  kraft: ['legs', 'push', 'back', 'core', 'legs', 'push', 'core', 'back'],
+  fitness: ['legs', 'cardio', 'core', 'push', 'back', 'cardio', 'legs', 'core'],
+  ausdauer: ['cardio', 'legs', 'cardio', 'core', 'cardio', 'push', 'cardio', 'back'],
+};
+const RATE = { work: 0.1, run: 0.15, rest: 0.03, warm: 0.05, cool: 0.04, prep: 0.02 }; // grobe kcal pro Sekunde
+
+function pickExercises(n) {
+  const order = ORDER[profile.focus] || ORDER.fitness, used = new Set(), out = [];
+  for (let i = 0; i < n; i++) {
+    let pool = Object.entries(EX).filter(([k, e]) => e.cat === order[i % order.length] && !used.has(k));
+    if (!pool.length) pool = Object.entries(EX).filter(([k]) => !used.has(k));
+    if (!pool.length) break;
+    const [k, e] = pool[(TR.sessions + i) % pool.length];
+    used.add(k); out.push(e);
+  }
+  if (profile.back) { // mindestens 2 Rücken/Core-Übungen
+    const isB = e => BACK_RE.test(e.name);
+    while (out.filter(isB).length < 2) {
+      const spare = Object.values(EX).find(e => isB(e) && !out.includes(e));
+      let idx = -1; for (let j = out.length - 1; j >= 0; j--) if (!isB(out[j])) { idx = j; break; }
+      if (!spare || idx < 0) break;
+      out[idx] = spare;
+    }
+  }
+  return out;
+}
+
+function buildPlan() {
+  const mode = TR.mode, L = TR.lv[mode], steps = [], info = [];
+  const S = (name, secs, kind, extra = {}) => steps.push({ name, secs, kind, ...extra });
+  S('Mach dich bereit', 5, 'prep', { cue: 'Handy abstellen, Platz schaffen.' });
+  if (mode === 'run') {
+    const run = 60 + 20 * L, walk = Math.max(60, 90 - 5 * L);
+    const n = Math.max(2, Math.floor(([1200, 1800, 2400][TR.size] - 480) / (run + walk)));
+    S('Zügig gehen', 300, 'warm', { cue: 'Locker einlaufen, Schultern lösen, Rumpf aufrecht.' });
+    for (let i = 1; i <= n; i++) {
+      S(`Laufen ${i}/${n}`, run, 'run', { cue: 'Gleichmäßig, du solltest noch sprechen können. Rumpf fest, Hüfte locker.' });
+      if (i < n) S('Gehen', walk, 'rest', { cue: 'Atmung beruhigen.' });
+    }
+    S('Auslaufen', 180, 'cool', { cue: 'Langsam gehen, Puls runterfahren.' });
+    info.push('5 min zügig gehen', `${n}× ${fmt(run)} laufen / ${fmt(walk)} gehen`, '3 min auslaufen');
+    return { mode, title: `Lauf-Intervalle (${n} Runden)`, steps, info };
+  }
+  const work = 30 + 4 * Math.min(L, 5), rest = L >= 5 ? 15 : 20, rounds = 3 + (L >= 6 ? 1 : 0);
+  const exs = pickExercises([4, 6, 8][TR.size]);
+  WARM.forEach(([n, cue]) => S(n, 30, 'warm', { cue }));
+  for (let r = 1; r <= rounds; r++) exs.forEach((e, i) => {
+    S(e.name, work, 'work', { cue: e.cue, round: r, rounds, switch: e.switch });
+    if (r === rounds && i === exs.length - 1) return;
+    i === exs.length - 1 ? S('Pause (Runde geschafft)', rest + 25, 'rest', { cue: 'Trinken, Atmen.' }) : S('Pause', rest, 'rest', { cue: 'Locker bleiben.' });
+  });
+  S('Kindshaltung', 45, 'cool', { cue: 'Knie am Boden, Gesäß Richtung Fersen, Arme nach vorn – entspannt den unteren Rücken.' });
+  info.push(`${exs.length} Übungen × ${rounds} Runden`, `${work} s Belastung / ${rest} s Pause`, exs.map(e => e.name).join(' · '), 'Aufwärmen 90 s + Dehnen 45 s');
+  if (profile.back) info.push('🛡 Rücken-Schutz: mindestens 2 Rücken/Core-Übungen eingebaut');
+  return { mode, title: `Zuhause · ${exs.length} Übungen`, steps, info };
+}
+
+let run = null;
+const cur = () => run.plan.steps[run.i];
+
+function beep(freq = 880, dur = 0.12) {
+  try {
+    const c = run.actx, o = c.createOscillator(), g = c.createGain();
+    o.frequency.value = freq; g.gain.value = 0.25; o.connect(g); g.connect(c.destination);
+    o.start(); o.stop(c.currentTime + dur);
+  } catch {}
+  try { navigator.vibrate && navigator.vibrate(dur * 1000); } catch {}
+}
+
+function credit(s, secs, full) {
+  run.elapsed += secs; run.kcal += (RATE[s.kind] || 0) * secs;
+  if (full && s.kind === 'work') { const o = run.sets[s.name] ||= { sets: 0, secs: s.secs }; o.sets++; }
+}
+
+function advance(credited) {
+  const s = cur();
+  if (credited) credit(s, s.secs, true);
+  if (run.i + 1 >= run.plan.steps.length) return false;
+  run.i++; run.half = false; run.lastBeep = 0;
+  return true;
+}
+
+function startSession() {
+  const plan = buildPlan(), AC = window.AudioContext || window.webkitAudioContext;
+  run = { plan, i: 0, paused: false, half: false, lastBeep: 0, elapsed: 0, kcal: 0, sets: {}, drawn: -1, actx: AC ? new AC() : null };
+  try { run.actx && run.actx.resume(); } catch {}
+  try { navigator.wakeLock && navigator.wakeLock.request('screen').then(l => { if (run) run.wake = l; }).catch(() => {}); } catch {}
+  run.end = Date.now() + cur().secs * 1000;
+  document.querySelector('nav').classList.add('hidden');
+  buildRunView(); beep(1200, 0.25);
+  run.timer = setInterval(tick, 250);
+}
+
+function buildRunView() {
+  const s = cur(), steps = run.plan.steps;
+  const nxt = steps.slice(run.i + 1).find(x => x.kind !== 'rest');
+  const label = s.rounds ? `Runde ${s.round}/${s.rounds}` : ({ warm: 'Aufwärmen', cool: 'Abkühlen', prep: 'Gleich geht’s los', rest: 'Pause', run: 'Laufen' }[s.kind] || '');
+  run.drawn = run.i;
+  $('#view').innerHTML = `
+  <div class="card run ${s.kind === 'work' || s.kind === 'run' ? 'run-work' : 'run-rest'}">
+    <div class="muted" style="text-align:center">${label} · Schritt ${run.i + 1}/${steps.length}</div>
+    <div class="runname">${esc(s.name)}</div>
+    <div class="clock" id="clock">${fmt(s.secs)}</div>
+    <div class="bar"><div id="barfill"></div></div>
+    <div class="warn" id="sw" style="text-align:center;min-height:1.4em;font-weight:600"></div>
+    <p class="muted">${esc(s.cue || '')}</p>
+    <p class="muted">${nxt ? 'Als Nächstes: <b>' + esc(nxt.name) + '</b>' : 'Letzter Schritt!'}</p>
+    <div class="row">
+      <button id="pause">${run.paused ? '▶ Weiter' : '⏸ Pause'}</button>
+      <button id="skip">⏭ Weiter</button>
+      <button id="stop">⏹ Ende</button>
+    </div>
+  </div>`;
+  $('#pause').onclick = () => {
+    if (run.paused) { run.end = Date.now() + run.rem; run.paused = false; }
+    else { run.rem = run.end - Date.now(); run.paused = true; }
+    buildRunView(); updateClock(Math.ceil((run.paused ? run.rem : run.end - Date.now()) / 1000), cur());
+  };
+  $('#skip').onclick = () => { if (advance(false)) { run.end = Date.now() + cur().secs * 1000; run.paused = false; beep(1200, 0.2); buildRunView(); } else finishSession(); };
+  $('#stop').onclick = () => { if (confirm('Training beenden?')) finishSession(true); };
+}
+
+function updateClock(rem, s) {
+  const c = $('#clock'); if (!c) return;
+  c.textContent = fmt(Math.max(0, rem));
+  $('#barfill').style.width = Math.min(100, (s.secs - rem) / s.secs * 100) + '%';
+}
+
+function tick() {
+  if (!run || run.paused) return;
+  const now = Date.now();
+  while (now >= run.end) {
+    if (!advance(true)) return finishSession();
+    run.end += cur().secs * 1000; beep(1200, 0.25);
+  }
+  if (run.drawn !== run.i) buildRunView();
+  const s = cur(), rem = Math.ceil((run.end - now) / 1000);
+  if (rem > 0 && rem <= 3 && rem !== run.lastBeep) { run.lastBeep = rem; beep(700, 0.08); }
+  if (s.switch && !run.half && rem <= s.secs / 2) { run.half = true; beep(1000, 0.3); const sw = $('#sw'); if (sw) sw.textContent = '↔ Seite wechseln!'; }
+  updateClock(rem, s);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!run || document.hidden) return;
+  try { navigator.wakeLock && navigator.wakeLock.request('screen').then(l => { if (run) run.wake = l; }).catch(() => {}); } catch {}
+  tick();
+});
+
+function finishSession(early) {
+  const r = run; clearInterval(r.timer);
+  try { r.wake && r.wake.release(); } catch {}
+  if (early) { const s = cur(), left = Math.max(0, Math.ceil((r.paused ? r.rem : r.end - Date.now()) / 1000)); credit(s, s.secs - left, false); }
+  const leave = tab => { run = null; document.querySelector('nav').classList.remove('hidden'); render(tab); };
+  if (r.elapsed < 60) {
+    $('#view').innerHTML = `<div class="card"><h2>Das war sehr kurz</h2><p class="muted">Unter einer Minute speichere ich nichts.</p><button class="primary" id="back">Zurück</button></div>`;
+    $('#back').onclick = () => leave('trainer'); return;
+  }
+  const mins = Math.max(1, Math.round(r.elapsed / 60));
+  $('#view').innerHTML = `
+  <div class="card">
+    <h2>${early ? 'Training beendet' : '🎉 Geschafft!'}</h2>
+    <p class="muted">${esc(r.plan.title)} · ${mins} min aktive Zeit</p>
+    <label>Kalorien (grobe Schätzung – gern anpassen)</label><input type="number" id="kc" min="0" value="${Math.round(r.kcal)}">
+    <label>Wie war es?</label>
+    <select id="rate"><option value="easy">Zu leicht</option><option value="ok" selected>Passt</option><option value="hard">Zu schwer</option></select>
+    <label>Notiz (z.B. Rücken)</label><input id="tnote">
+    <p class="row"><button class="primary" id="saveT">Speichern</button><button id="drop">Verwerfen</button></p>
+  </div>`;
+  $('#drop').onclick = () => leave('trainer');
+  $('#saveT').onclick = () => {
+    const rate = $('#rate').value, mode = r.plan.mode, note = $('#tnote').value.trim();
+    workouts.push({
+      id: Date.now(), date: today(), type: mode === 'run' ? 'cardio' : 'kraft', minutes: mins, kcal: +$('#kc').value || 0,
+      exercises: Object.entries(r.sets).map(([name, v]) => ({ name, sets: v.sets, reps: v.secs, weight: 0, unit: 's' })),
+      note: ['Trainer: ' + r.plan.title + (early ? ' (vorzeitig beendet)' : ''), note].filter(Boolean).join(' · '),
+    });
+    TR.sessions++;
+    let lv = TR.lv[mode];
+    if (rate === 'easy') { lv++; TR.streak[mode] = 0; }
+    else if (rate === 'hard') { lv--; TR.streak[mode] = 0; }
+    else if (!early && ++TR.streak[mode] >= 2) { lv++; TR.streak[mode] = 0; }
+    TR.lv[mode] = Math.max(0, Math.min(10, lv));
+    saveTR(); save(); leave('log');
+  };
+}
+
+function viewTrainer() {
+  const plan = buildPlan(), total = plan.steps.reduce((a, s) => a + s.secs, 0);
+  $('#view').innerHTML = `
+  <div class="card">
+    <h2>🧑‍🏫 Dein Trainer</h2>
+    <div class="row">
+      <div><label>Training</label><select id="mode"><option value="home">Zuhause (Körpergewicht)</option><option value="run">Lauf-Intervalle</option></select></div>
+      <div><label>Länge</label><select id="size">${SIZES.map((s, i) => `<option value="${i}">${s}</option>`).join('')}</select></div>
+    </div>
+    <p class="muted">Du brauchst nur dein Handy und etwas Platz. Level ${TR.lv[TR.mode]}/10 · Ziel ${profile.freq}× pro Woche · Fokus ${FOCUS[profile.focus]}.</p>
+  </div>
+  <div class="card">
+    <h2>${esc(plan.title)}</h2>
+    <div class="stat">≈ ${Math.round(total / 60)} min</div>
+    <ul>${plan.info.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
+    <button class="primary" id="go" style="width:100%;padding:14px">▶ Start</button>
+  </div>
+  <div class="card muted">Nach dem Training sagst du, wie es war: <b>zu leicht</b> → nächstes Mal mehr, <b>zu schwer</b> → weniger, <b>passt</b> zweimal → Steigerung. Das ist dein automatisches Progressive Overload. Beim Start geht der Ton an und der Bildschirm bleibt wach.</div>`;
+  $('#mode').value = TR.mode; $('#size').value = TR.size;
+  $('#mode').onchange = e => { TR.mode = e.target.value; saveTR(); viewTrainer(); };
+  $('#size').onchange = e => { TR.size = +e.target.value; saveTR(); viewTrainer(); };
+  $('#go').onclick = startSession;
 }
 
 document.querySelector('nav').onclick = e => e.target.dataset.tab && render(e.target.dataset.tab);
