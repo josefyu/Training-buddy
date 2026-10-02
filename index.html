@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Training Buddy</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1b1f24; --muted:#6b7280; --accent:#2563eb; --ok:#16a34a; --warn:#d97706; --line:#e5e7eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --card:#181b21; --fg:#e8eaed; --muted:#9aa0a6; --accent:#60a5fa; --ok:#4ade80; --warn:#fbbf24; --line:#2a2f37; }
+  }
+  * { box-sizing:border-box }
+  body { margin:0; font:16px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg) }
+  main { max-width:640px; margin:0 auto; padding:16px }
+  h1 { font-size:1.3rem; margin:0 0 12px }
+  h2 { font-size:1.05rem; margin:0 0 8px }
+  nav { display:flex; gap:8px; margin-bottom:16px }
+  nav button { flex:1 }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px }
+  label { display:block; font-size:.85rem; color:var(--muted); margin:8px 0 2px }
+  input, select, textarea { width:100%; padding:9px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit }
+  button { padding:9px 14px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); font:inherit; cursor:pointer }
+  button.primary, nav button.active { background:var(--accent); border-color:var(--accent); color:#fff }
+  .row { display:flex; gap:8px } .row > * { flex:1 }
+  .ex { display:grid; grid-template-columns:2fr 1fr 1fr 1fr auto; gap:6px; margin-bottom:6px }
+  .muted { color:var(--muted); font-size:.9rem }
+  .ok { color:var(--ok) } .warn { color:var(--warn) }
+  .stat { font-size:1.4rem; font-weight:600 }
+  ul { margin:6px 0; padding-left:20px }
+  .entry { border-top:1px solid var(--line); padding:8px 0 } .entry:first-of-type { border-top:0 }
+  .hidden { display:none }
+</style>
+</head>
+<body>
+<main>
+  <h1>🏃 Training Buddy</h1>
+  <nav>
+    <button data-tab="log">Training</button>
+    <button data-tab="week">Wochenanalyse</button>
+    <button data-tab="profile">Ziele</button>
+  </nav>
+  <div id="view"></div>
+</main>
+
+<script>
+// ---------- Storage ----------
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }
+};
+let profile = store.get('tb_profile', null);   // {freq, focus, overload, back}
+let workouts = store.get('tb_workouts', []);   // [{id,date,type,minutes,kcal,exercises:[{name,sets,reps,weight}],note}]
+const save = () => { store.set('tb_profile', profile); store.set('tb_workouts', workouts); };
+
+// ---------- Helpers ----------
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const iso = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 10); };
+const today = () => iso(new Date());
+const weekStart = d => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return iso(x); };
+const addDays = (d, n) => { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return iso(x); };
+const inWeek = (w, ws) => w.date >= ws && w.date <= addDays(ws, 6);
+const FOCUS = { ausdauer: 'Ausdauer', kraft: 'Kraft', fitness: 'Allgemeine Fitness' };
+const BACK_RE = /plank|unterarmstütz|bird.?dog|dead.?bug|rudern|row|kreuzheben|deadlift|brücke|bridge|superman|hyperext|rückenstreck|face.?pull|latzug|klimmzug|pull.?up|seitstütz|hip.?thrust|glute/i;
+const vol = e => (+e.sets || 0) * (+e.reps || 0) * (+e.weight || 0);
+const sets = e => +e.sets || 0;
+
+// ---------- Views ----------
+function render(tab) {
+  tab = tab || (profile ? (location.hash.slice(1) || 'log') : 'profile');
+  location.hash = tab;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $('#view').innerHTML = '';
+  ({ log: viewLog, week: viewWeek, profile: viewProfile })[tab]();
+}
+
+function viewProfile() {
+  const p = profile || { freq: 3, focus: 'fitness', overload: true, back: true };
+  $('#view').innerHTML = `
+  <div class="card">
+    <h2>${profile ? 'Deine Ziele' : 'Willkommen! Erzähl mir von deinem Training'}</h2>
+    <label>Wie oft pro Woche willst du trainieren?</label>
+    <select id="freq">${[1,2,3,4,5,6,7].map(n => `<option ${n==p.freq?'selected':''}>${n}</option>`).join('')}</select>
+    <label>Was ist dein Fokus?</label>
+    <select id="focus">${Object.entries(FOCUS).map(([k,v]) => `<option value="${k}" ${k==p.focus?'selected':''}>${v}</option>`).join('')}</select>
+    <label>Progressive Overload (Belastung langsam steigern)</label>
+    <select id="overload"><option value="1" ${p.overload?'selected':''}>Ja, bitte tracken</option><option value="0" ${!p.overload?'selected':''}>Nein</option></select>
+    <label>Rückenschmerzen vorbeugen</label>
+    <select id="back"><option value="1" ${p.back?'selected':''}>Ja, bitte berücksichtigen</option><option value="0" ${!p.back?'selected':''}>Nein</option></select>
+    <p><button class="primary" id="saveP">Speichern</button></p>
+  </div>
+  <div class="card"><h2>Daten</h2>
+    <button id="exp">Export (JSON)</button>
+    <button id="imp">Import</button>
+  </div>`;
+  $('#saveP').onclick = () => {
+    profile = { freq: +$('#freq').value, focus: $('#focus').value, overload: $('#overload').value === '1', back: $('#back').value === '1' };
+    save(); render('log');
+  };
+  $('#exp').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ profile, workouts }, null, 2)], { type: 'application/json' }));
+    a.download = 'training-buddy.json'; a.click();
+  };
+  $('#imp').onclick = () => {
+    const i = document.createElement('input'); i.type = 'file'; i.accept = '.json';
+    i.onchange = async () => {
+      try { const d = JSON.parse(await i.files[0].text()); profile = d.profile; workouts = d.workouts || []; save(); render('log'); }
+      catch { alert('Datei konnte nicht gelesen werden.'); }
+    };
+    i.click();
+  };
+}
+
+function exRow(e = {}) {
+  const r = document.createElement('div'); r.className = 'ex';
+  r.innerHTML = `<input placeholder="Übung" value="${esc(e.name)}" list="exlist">
+    <input type="number" min="0" placeholder="Sätze" value="${esc(e.sets)}">
+    <input type="number" min="0" placeholder="Wdh." value="${esc(e.reps)}">
+    <input type="number" min="0" step="0.5" placeholder="kg" value="${esc(e.weight)}">
+    <button type="button" title="Entfernen">✕</button>`;
+  r.lastElementChild.onclick = () => r.remove();
+  return r;
+}
+
+function viewLog() {
+  const names = [...new Set(workouts.flatMap(w => (w.exercises || []).map(e => e.name)))];
+  $('#view').innerHTML = `
+  <div class="card" id="sundayBanner"></div>
+  <div class="card">
+    <h2>Training erfassen</h2>
+    <div class="row">
+      <div><label>Datum</label><input type="date" id="date" value="${today()}"></div>
+      <div><label>Art</label><select id="type"><option value="cardio">Ausdauer (z.B. Laufen)</option><option value="kraft">Kraft / Reps</option><option value="mix">Beides</option></select></div>
+    </div>
+    <div class="row" id="cardioBox">
+      <div><label>Dauer (min)</label><input type="number" id="minutes" min="0" placeholder="30"></div>
+      <div><label>Kalorien (kcal)</label><input type="number" id="kcal" min="0" placeholder="250"></div>
+    </div>
+    <div id="kraftBox" class="hidden">
+      <label>Übungen (Sätze × Wdh. × kg; kg leer = Körpergewicht)</label>
+      <div id="exs"></div>
+      <button type="button" id="addEx">+ Übung</button>
+      <datalist id="exlist">${names.map(n => `<option value="${esc(n)}">`).join('')}<option value="Plank"><option value="Bird Dog"><option value="Dead Bug"><option value="Rudern"><option value="Glute Bridge"><option value="Kniebeuge"><option value="Liegestütz"></datalist>
+    </div>
+    <label>Notiz (z.B. Rücken, Energie)</label><input id="note">
+    <p><button class="primary" id="add">Speichern</button></p>
+  </div>
+  <div class="card"><h2>Letzte Einheiten</h2><div id="list"></div></div>`;
+
+  const sync = () => {
+    const t = $('#type').value;
+    $('#cardioBox').classList.toggle('hidden', t === 'kraft');
+    $('#kraftBox').classList.toggle('hidden', t === 'cardio');
+    if (t !== 'cardio' && !$('#exs').children.length) $('#exs').append(exRow());
+  };
+  $('#type').onchange = sync; sync();
+  $('#addEx').onclick = () => $('#exs').append(exRow());
+  $('#add').onclick = () => {
+    const type = $('#type').value;
+    const exercises = type === 'cardio' ? [] : [...$('#exs').children].map(r => {
+      const [n, s, re, k] = [...r.querySelectorAll('input')].map(i => i.value);
+      return { name: n.trim(), sets: +s, reps: +re, weight: +k || 0 };
+    }).filter(e => e.name && e.sets && e.reps);
+    const w = { id: Date.now(), date: $('#date').value, type, minutes: +$('#minutes').value || 0, kcal: +$('#kcal').value || 0, exercises, note: $('#note').value.trim() };
+    if (!w.minutes && !w.kcal && !exercises.length) return alert('Bitte Dauer/Kalorien oder mindestens eine Übung angeben.');
+    workouts.push(w); save(); render('log');
+  };
+
+  const list = [...workouts].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id).slice(0, 15);
+  $('#list').innerHTML = list.length ? list.map(w => `<div class="entry"><b>${w.date}</b> ${w.minutes ? `· ${w.minutes} min` : ''} ${w.kcal ? `· ${w.kcal} kcal` : ''}
+    ${w.exercises?.length ? `<div class="muted">${w.exercises.map(e => `${esc(e.name)} ${e.sets}×${e.reps}${e.weight ? ' @' + e.weight + 'kg' : ''}`).join(', ')}</div>` : ''}
+    ${w.note ? `<div class="muted">📝 ${esc(w.note)}</div>` : ''}
+    <button data-del="${w.id}" style="float:right;margin-top:-28px">🗑</button></div>`).join('') : '<p class="muted">Noch nichts erfasst.</p>';
+  $('#list').onclick = ev => { const id = ev.target.dataset.del; if (id && confirm('Eintrag löschen?')) { workouts = workouts.filter(w => w.id != id); save(); render('log'); } };
+
+  const isSunday = new Date().getDay() === 0;
+  $('#sundayBanner').innerHTML = isSunday
+    ? `<h2>📊 Es ist Sonntag – Zeit für deine Wochenanalyse</h2><button class="primary" onclick="render('week')">Analyse öffnen</button>`
+    : `<h2>Hallo! 👋</h2><div class="muted">Ziel: ${profile.freq}× pro Woche · Fokus ${FOCUS[profile.focus]}. Jeden Sonntag gibt's deine Wochenanalyse.</div>`;
+}
+
+// ---------- Analysis ----------
+function analyse(ws) {
+  const cur = workouts.filter(w => inWeek(w, ws));
+  const prev = workouts.filter(w => inWeek(w, addDays(ws, -7)));
+  const sum = (arr, f) => arr.reduce((a, w) => a + f(w), 0);
+  const exs = arr => arr.flatMap(w => w.exercises || []);
+  const days = new Set(cur.map(w => w.date)).size;
+  const cardioMin = sum(cur, w => w.minutes), kcal = sum(cur, w => w.kcal);
+  const volCur = sum(exs(cur).map(e => ({ v: vol(e) })), x => x.v), volPrev = sum(exs(prev).map(e => ({ v: vol(e) })), x => x.v);
+  const setsCur = sum(exs(cur).map(e => ({ v: sets(e) })), x => x.v), setsPrev = sum(exs(prev).map(e => ({ v: sets(e) })), x => x.v);
+  const backSets = sum(exs(cur).filter(e => BACK_RE.test(e.name)).map(e => ({ v: sets(e) })), x => x.v);
+  const backDays = new Set(cur.filter(w => (w.exercises || []).some(e => BACK_RE.test(e.name))).map(w => w.date)).size;
+
+  // per-exercise progression vs. last week (best set weight, else total reps)
+  const best = arr => { const m = {}; exs(arr).forEach(e => { const k = e.name.toLowerCase(); const o = m[k] ||= { name: e.name, w: 0, reps: 0 }; o.w = Math.max(o.w, e.weight || 0); o.reps = Math.max(o.reps, (e.sets || 0) * (e.reps || 0)); }); return m; };
+  const bc = best(cur), bp = best(prev);
+  const prog = Object.entries(bc).filter(([k]) => bp[k]).map(([k, c]) => {
+    const p = bp[k];
+    const up = c.w > p.w || (c.w === p.w && c.reps > p.reps);
+    const down = c.w < p.w || (c.w === p.w && c.reps < p.reps);
+    return { name: c.name, state: up ? 'up' : down ? 'down' : 'same', txt: c.w || p.w ? `${p.w}→${c.w} kg` : `${p.reps}→${c.reps} Wdh.` };
+  });
+
+  const tips = [];
+  if (!cur.length) tips.push('Diese Woche wurde nichts erfasst. Schon 20 Minuten Bewegung zählen – plane die nächste Einheit gleich fest ein.');
+  else if (days < profile.freq) tips.push(`Du hast ${days} von ${profile.freq} geplanten Einheiten geschafft. Lege nächste Woche feste Tage fest (z.B. ${profile.freq} Termine im Kalender).`);
+  else tips.push(`Zielfrequenz erreicht (${days}/${profile.freq}) – stark!`);
+  if (cardioMin && cardioMin < 150 && profile.focus !== 'kraft') tips.push(`Ausdauer: ${cardioMin} min. Die WHO empfiehlt ≥150 min moderate Aktivität pro Woche – steigere um ca. 10 % pro Woche, nicht schneller.`);
+  if (profile.overload) {
+    if (volPrev && volCur) { const d = Math.round((volCur / volPrev - 1) * 100); tips.push(`Krafttraining-Volumen ${d >= 0 ? '+' : ''}${d} % ggü. Vorwoche. ${d < 0 ? 'Nächste Woche pro Übung +1 Wdh. oder +2,5 kg versuchen.' : d > 15 ? 'Das ist ein großer Sprung – steigere lieber um 5–10 %, um Verletzungen zu vermeiden.' : 'Gute, nachhaltige Steigerung.'}` ); }
+    else if (setsCur && !setsPrev) tips.push('Das ist deine Basiswoche für Kraft – nächste Woche versuchen wir pro Übung +1 Wdh. oder +2,5 kg (Progressive Overload).');
+    else if (!setsCur) tips.push('Kein Krafttraining erfasst – für Progressive Overload brauchen wir Sätze × Wdh. × kg.');
+  }
+  if (profile.back) {
+    if (backDays >= 2) tips.push(`Rücken: ${backSets} Sätze an ${backDays} Tagen für Rücken/Core – genau richtig als Prävention.`);
+    else tips.push(`Rücken: nur ${backSets} Sätze an ${backDays} Tag(en). Ziel: 2×/Woche je 2–3 Übungen, z.B. Bird Dog, Plank, Glute Bridge, Rudern (je 2–3 Sätze, ruhig und kontrolliert). Beim Laufen: auf Rumpfspannung und lockere Hüfte achten.`);
+    tips.push('Bei anhaltenden oder ausstrahlenden Schmerzen, Taubheit oder Schwäche bitte ärztlich abklären lassen.');
+  }
+  return { cur, days, cardioMin, kcal, volCur, volPrev, setsCur, backSets, backDays, prog, tips };
+}
+
+function viewWeek() {
+  let ws = weekStart(today());
+  const draw = () => {
+    const a = analyse(ws);
+    $('#view').innerHTML = `
+    <div class="card">
+      <div class="row"><button id="prev">←</button><div style="text-align:center;flex:3"><b>${ws} – ${addDays(ws, 6)}</b></div><button id="next">→</button></div>
+    </div>
+    <div class="card"><div class="row">
+      <div><div class="stat">${a.days}/${profile.freq}</div><div class="muted">Trainingstage</div></div>
+      <div><div class="stat">${a.cardioMin}</div><div class="muted">Ausdauer (min)</div></div>
+      <div><div class="stat">${a.kcal}</div><div class="muted">kcal</div></div>
+      <div><div class="stat">${a.setsCur}</div><div class="muted">Kraft-Sätze</div></div>
+    </div></div>
+    ${a.prog.length ? `<div class="card"><h2>Progression ggü. Vorwoche</h2><ul>${a.prog.map(p => `<li>${esc(p.name)}: <span class="${p.state === 'up' ? 'ok' : p.state === 'down' ? 'warn' : 'muted'}">${p.state === 'up' ? '▲' : p.state === 'down' ? '▼' : '＝'} ${p.txt}</span></li>`).join('')}</ul></div>` : ''}
+    <div class="card"><h2>Dein Buddy sagt</h2><ul>${a.tips.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>`;
+    $('#prev').onclick = () => { ws = addDays(ws, -7); draw(); };
+    $('#next').onclick = () => { ws = addDays(ws, 7); draw(); };
+  };
+  draw();
+}
+
+document.querySelector('nav').onclick = e => e.target.dataset.tab && render(e.target.dataset.tab);
+render();
+</script>
+</body>
+</html>
